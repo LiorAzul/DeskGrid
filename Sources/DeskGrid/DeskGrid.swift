@@ -102,8 +102,8 @@ final class DeskGridController {
             let layer = info[kCGWindowLayer as String] as? Int ?? -1
             if layer != 0 { continue }
 
-            if let boundsDict = info[kCGWindowBounds as String] as! CFDictionary?,
-               let bounds = CGRect(dictionaryRepresentation: boundsDict) {
+            if let boundsDict = info[kCGWindowBounds as String],
+               let bounds = CGRect(dictionaryRepresentation: boundsDict as! CFDictionary) {
                 if bounds.contains(cgPoint) {
                     return false
                 }
@@ -345,10 +345,16 @@ final class DeskGridController {
         }
     }
 
+    /// Returns only real AXWindow elements (filters out desktop scroll areas, etc.)
     private func axWindows(for axApp: AXUIElement) -> [AXUIElement] {
         var ref: CFTypeRef?
         AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref)
-        return (ref as? [AXUIElement]) ?? []
+        guard let all = ref as? [AXUIElement] else { return [] }
+        return all.filter { element in
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            return (roleRef as? String) == "AXWindow"
+        }
     }
 
     // MARK: - Position: fresh launch
@@ -396,9 +402,11 @@ final class DeskGridController {
         let currentWindows = axWindows(for: axApp)
 
         if currentWindows.count > countBefore {
-            // New window appeared — it's the last one in the AX list
-            let newWindow = currentWindows.last!
-            setWindowFrame(newWindow, origin: origin, size: size)
+            // New window appeared — use the focused window (newly created windows get focus)
+            var focusedRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedRef)
+            let targetWindow = (focusedRef as! AXUIElement?) ?? currentWindows.last!
+            setWindowFrame(targetWindow, origin: origin, size: size)
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.waitForNewAXWindowAndPosition(
