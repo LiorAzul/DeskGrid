@@ -30,9 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AXIsProcessTrustedWithOptions(opts)
         }
 
+        // Set app icon from bundled PNG
+        if let iconPath = Bundle.main.path(forResource: "AppIcon", ofType: "png"),
+           let icon = NSImage(contentsOfFile: iconPath) {
+            NSApp.applicationIconImage = icon
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "square.grid.3x3", accessibilityDescription: "DeskGrid")
+            button.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "DeskGrid")
         }
 
         let menu = NSMenu()
@@ -66,6 +72,7 @@ final class KeyableWindow: NSWindow {
 final class DeskGridController {
     private var selectionWindow: NSWindow?
     private var gridWindow: NSWindow?
+    private var placeholderWindow: NSWindow?
     private var dragOrigin: NSPoint?
     private var lastDrawnRect: NSRect = .zero
     private var frontmostAtMouseDown: String?
@@ -215,13 +222,13 @@ final class DeskGridController {
         window.hasShadow = true
 
         let view = GridView(frame: NSRect(origin: .zero, size: rect.size), apps: apps)
-        view.onAppSelected = { [weak self] url in
+        view.onAppSelected = { [weak self] app in
             guard let self = self else { return }
             let target = self.lastDrawnRect
-            // Capture screen height NOW, before dismissing (NSScreen.main may change)
             let screenH = NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0
             self.dismissGrid()
-            self.launchAndPosition(url: url, rect: target, screenH: screenH)
+            self.showPlaceholder(in: target, appName: app.name, appIcon: app.icon)
+            self.launchAndPosition(url: app.url, rect: target, screenH: screenH)
         }
         window.contentView = view
         gridWindow = window
@@ -247,6 +254,62 @@ final class DeskGridController {
         gridWindow = nil
         if let m = clickOutsideMonitor { NSEvent.removeMonitor(m); clickOutsideMonitor = nil }
         if let m = escapeMonitor { NSEvent.removeMonitor(m); escapeMonitor = nil }
+    }
+
+    // MARK: - Placeholder
+
+    private func showPlaceholder(in rect: NSRect, appName: String, appIcon: NSImage) {
+        let w = NSWindow(contentRect: rect, styleMask: .borderless, backing: .buffered, defer: false)
+        w.setFrame(rect, display: true)
+        w.level = .floating
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.hasShadow = true
+        w.ignoresMouseEvents = true
+
+        let content = NSView(frame: NSRect(origin: .zero, size: rect.size))
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 12
+        content.layer?.masksToBounds = true
+
+        let blur = NSVisualEffectView(frame: content.bounds)
+        blur.autoresizingMask = [.width, .height]
+        blur.material = .hudWindow
+        blur.blendingMode = .behindWindow
+        blur.state = .active
+        content.addSubview(blur)
+
+        let iconSize: CGFloat = min(min(rect.width, rect.height) * 0.35, 64)
+        let totalHeight = iconSize + 6 + 20 // icon + gap + label
+        let baseY = (rect.height - totalHeight) / 2
+
+        let iv = NSImageView(frame: NSRect(
+            x: (rect.width - iconSize) / 2, y: baseY + 26,
+            width: iconSize, height: iconSize
+        ))
+        iv.image = appIcon
+        iv.imageScaling = .scaleProportionallyUpOrDown
+        content.addSubview(iv)
+
+        let label = NSTextField(labelWithString: appName)
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = .white
+        label.alignment = .center
+        label.sizeToFit()
+        label.frame = NSRect(
+            x: (rect.width - label.frame.width) / 2, y: baseY,
+            width: label.frame.width, height: label.frame.height
+        )
+        content.addSubview(label)
+
+        w.contentView = content
+        placeholderWindow = w
+        w.orderFrontRegardless()
+    }
+
+    private func dismissPlaceholder() {
+        placeholderWindow?.orderOut(nil)
+        placeholderWindow = nil
     }
 
     // MARK: - Launch & Position
@@ -432,6 +495,7 @@ final class DeskGridController {
 
     /// Set window frame — applies twice because apps often reset position on window creation
     private func setWindowFrame(_ window: AXUIElement, origin: CGPoint, size: CGSize) {
+        dismissPlaceholder()
         applyFrame(window, origin: origin, size: size)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             self.applyFrame(window, origin: origin, size: size)
@@ -461,7 +525,7 @@ final class SelectionView: NSView {
 
 @MainActor
 final class GridView: NSView {
-    var onAppSelected: ((URL) -> Void)?
+    var onAppSelected: ((AppInfo) -> Void)?
 
     init(frame: NSRect, apps: [AppInfo]) {
         super.init(frame: frame)
@@ -512,7 +576,7 @@ final class GridView: NSView {
             let x = xOff + CGFloat(col) * (cellSize + padding)
             let y = doc.bounds.height - padding - CGFloat(row + 1) * (cellSize + padding)
             let btn = AppTile(frame: NSRect(x: x, y: y, width: cellSize, height: cellSize), app: app)
-            btn.onTap = { [weak self] in self?.onAppSelected?(app.url) }
+            btn.onTap = { [weak self] in self?.onAppSelected?(app) }
             doc.addSubview(btn)
         }
         scroll.documentView = doc

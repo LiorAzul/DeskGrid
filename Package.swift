@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "DeskGrid",
             exclude: ["Info.plist"],
+            resources: [.copy("AppIcon.png")],
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Sources/DeskGrid/Info.plist"])
             ]
